@@ -1,0 +1,124 @@
+name: exit codes
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  fail:
+    name: exit 1 fails the step
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: gate
+        continue-on-error: true
+        uses: Portll/cobolwork@d277b85899d5bf13c703eb0bdb053ca8b129a83d # main
+      - name: Expect failure/1/fail
+        env:
+          GOT: ${{ steps.gate.outcome }}/${{ steps.gate.outputs.exit-code }}/${{ steps.gate.outputs.verdict }}
+        run: |
+          echo "$GOT"
+          test "$GOT" = failure/1/fail
+
+  could-not-run:
+    name: exit 2 fails the step
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: gate
+        continue-on-error: true
+        uses: Portll/cobolwork@d277b85899d5bf13c703eb0bdb053ca8b129a83d # main
+        with:
+          base: refs/heads/no-such-branch
+      - name: Expect failure/2/error
+        env:
+          GOT: ${{ steps.gate.outcome }}/${{ steps.gate.outputs.exit-code }}/${{ steps.gate.outputs.verdict }}
+        run: |
+          echo "$GOT"
+          test "$GOT" = failure/2/error
+
+  undecided:
+    name: exit 3 fails the step only under fail-on undecided
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fail-on: fail
+            expect: success/3/undecided
+          - fail-on: undecided
+            expect: failure/3/undecided
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write a program whose copybook is missing
+        run: |
+          mkdir undecided
+          cat > undecided/UNDEC.cbl <<'EOF'
+                 IDENTIFICATION DIVISION.
+                 PROGRAM-ID. UNDEC.
+                 DATA DIVISION.
+                 WORKING-STORAGE SECTION.
+                 COPY NOSUCHBK.
+                 PROCEDURE DIVISION.
+                     GOBACK.
+          EOF
+      - id: gate
+        continue-on-error: true
+        uses: Portll/cobolwork@d277b85899d5bf13c703eb0bdb053ca8b129a83d # main
+        with:
+          path: undecided
+          fail-on: ${{ matrix.fail-on }}
+      - name: Expect ${{ matrix.expect }}
+        env:
+          GOT: ${{ steps.gate.outcome }}/${{ steps.gate.outputs.exit-code }}/${{ steps.gate.outputs.verdict }}
+          EXPECT: ${{ matrix.expect }}
+        run: |
+          echo "$GOT"
+          test "$GOT" = "$EXPECT"
+
+  # The action passes no compiler, so a real exit 4 cannot arise; a stub in place of
+  # bin/cobolwork.mjs drives the action's own handling of it. ./cobolwork is that stubbed
+  # checkout of Portll/cobolwork, not this repository, so self-repository syntax does not apply.
+  compiler-failed:
+    name: exit 4 fails the step
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: Portll/cobolwork
+          ref: d277b85899d5bf13c703eb0bdb053ca8b129a83d
+          path: cobolwork
+          persist-credentials: false
+      - name: Replace the gate with one that exits 4
+        run: |
+          cat > cobolwork/bin/cobolwork.mjs <<'EOF'
+          process.stderr.write('cobolwork build: pass; compiler exited 1\n');
+          process.exit(4);
+          EOF
+      - id: gate
+        continue-on-error: true
+        uses: ./cobolwork # zizmor: ignore[self-repository]
+        with:
+          version: local
+      - name: Expect failure/4/pass
+        env:
+          GOT: ${{ steps.gate.outcome }}/${{ steps.gate.outputs.exit-code }}/${{ steps.gate.outputs.verdict }}
+        run: |
+          echo "$GOT"
+          test "$GOT" = failure/4/pass
